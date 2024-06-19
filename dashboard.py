@@ -1,5 +1,4 @@
 import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
@@ -152,7 +151,7 @@ if selectionne == "Flux des documents":
 elif selectionne == "Évolution des types de documents":
     st.header("Évolution des types de documents")
     donnees = charger_donnees(projets[projet_selectionne])
-    donnees['Date dépôt GED'] = pd.to_datetime(donnees['Date dépôt GED'], format='%d/%m/%Y')
+    donnees = pretraiter_donnees(donnees)
     options_type_document = donnees['TYPE DE DOCUMENT'].unique()
     types_selectionnes = st.multiselect('Sélectionnez les types de document', options_type_document, default=options_type_document[0], key='tab1_types')
     
@@ -179,6 +178,7 @@ elif selectionne == "Évolution des types de documents":
 elif selectionne == "Analyse des documents par lot et indice":
     st.header("Analyse des documents par lot et indice")
     donnees = charger_donnees(projets[projet_selectionne])
+    donnees = pretraiter_donnees(donnees)
     options_indice = donnees['INDICE'].unique()
     indices_selectionnes = st.multiselect('Sélectionnez un ou plusieurs indices', options_indice, key='tab3_indices')
 
@@ -269,8 +269,8 @@ elif selectionne == "Identification des acteurs principaux":
     st.plotly_chart(fig_ajoute_par, use_container_width=True)
 
 # Onglet 5: Comparaison de la masse de documents entre projets
-elif selectionne == "Comparaison de la masse de documents.":
-    st.header("Comparaison de la masse de documents.")
+elif selectionne == "Comparaison de la masse de documents":
+    st.header("Comparaison de la masse de documents")
     periode_selectionnee = st.radio(
         'Sélectionnez la période',
         options=['6m', '12m', 'all'],
@@ -309,7 +309,7 @@ elif selectionne == "Comparaison de la masse de documents.":
         mediane_masse = df_barre['Masse de documents'].median()
         df_barre['mediane'] = mediane_masse
 
-        # Création du graphique à barres pour voir la masse de chaque document;
+        # Création du graphique à barres pour voir la masse de chaque document
         fig_barre = go.Figure()
         fig_barre.add_trace(go.Bar(
             x=df_barre['Chantier'], y=df_barre['Masse de documents'],
@@ -333,11 +333,11 @@ elif selectionne == "Comparaison de la masse de documents.":
             )
 
         fig_barre.update_layout(
-            title='Comparaison de la masse de documents entre les chantiers.',
+            title='Comparaison de la masse de documents entre les chantiers',
             xaxis_title='Chantier', yaxis_title='Masse de documents',
             font=dict(size=15),
             height=450,  # Ajuster la hauteur du graphique
-            width=3000,  # Ajuster la largeur du graphique
+            width=1200,  # Ajuster la largeur du graphique
             yaxis=dict(title='Masse de documents', showgrid=True, zeroline=True, showline=True, showticklabels=True),
             xaxis=dict(title='Chantier', showgrid=True, zeroline=True, showline=True, showticklabels=True)
         )
@@ -346,4 +346,31 @@ elif selectionne == "Comparaison de la masse de documents.":
     fig1 = mise_a_jour_comparaison_masse_documents(projets_selectionnes, periode_selectionnee)
     st.plotly_chart(fig1, use_container_width=True)
 
-## FIN Programme !
+# Onglet 6: Nombre moyen de docs par type de document
+elif selectionne == "Nombre moyen de docs par type de document":
+    st.header("Nombre moyen de documents par type de document")
+    donnees = charger_donnees(projets[projet_selectionne])
+    donnees = pretraiter_donnees(donnees)
+
+    # Choix du type de calcul
+    type_calcul = st.selectbox('Sélectionnez le type de calcul', ['mean', 'max'], key='calcul_type')
+    representation = st.selectbox('Sélectionnez le type de représentation', ['Tableau', 'Boxplot'], key='rep_type')
+    
+    # Afficher les résultats selon le type de calcul et la représentation
+    afficher_resultats(donnees, type_calcul, representation, 'Nombre d\'indices', "de documents par type de document")
+
+# Onglet 7: Évaluer la durée moyenne par type de documents
+elif selectionne == "Évaluer la durée moyenne par type de documents":
+    st.header("Évaluer la durée moyenne par type de documents")
+    donnees = charger_donnees(projets[projet_selectionne])
+    donnees = pretraiter_donnees(donnees)
+
+    # Choix du type de calcul
+    type_calcul = st.selectbox('Sélectionnez le type de calcul', ['mean', 'max'], key='calcul_duree_type')
+    representation = st.selectbox('Sélectionnez le type de représentation', ['Tableau', 'Boxplot'], key='rep_duree_type')
+    
+    # Afficher les résultats selon le type de calcul et la représentation
+    afficher_resultats(donnees, type_calcul, representation, 'Différence en jours', "de durée entre versions par type de document")
+
+
+# FIN Programme
