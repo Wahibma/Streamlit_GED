@@ -1,327 +1,349 @@
 import pandas as pd
-from jupyter_dash import JupyterDash
-from dash import dcc, html, Input, Output, State
+import plotly.graph_objects as go
+import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
+from streamlit_option_menu import option_menu
+from datetime import timedelta
 
-# Les noms de projets
-projects = {
+# Les noms des projets et le chemin des fichiers.
+projets = {
     '40_LAFFITE': '40_LAFFITE.csv',
     'LIGTHWELL': 'LIGTHWELL.csv',
     'MDLF': 'MDLF.csv',
     'GOODLIFE': 'GOODLIFE.csv',
     'AXA_MAT': 'AXA_MAT.csv',
-    'LEDGED': 'LEDGED.csv',
+    'LEDGER': 'LEDGER.csv',
     'PECM': 'PECM.csv'
 }
 
-app = JupyterDash(__name__)
+# Styles personnalisés pour l'application.
+def style_entete():
+    st.markdown(f"""
+        <style>
+        .entete {{
+            background-color: #7FDBFF;
+            color: white;
+            font-weight: bold;
+            text-align: center;
+            padding: 20px;
+            font-size: 24px;
+        }}
+        .sidebar .css-1d391kg {{
+            background-color: #f8f9fa;
+        }}
+        .sidebar .css-1v3fvcr {{
+            background-color: #f8f9fa;
+        }}
+        .main .block-container {{
+            padding-top: 1rem;
+        }}
+        </style>
+        <div class="entete">
+            Suivi et Analyse des Documents GED
+        </div>
+        """, unsafe_allow_html=True)
 
-# Mise en page de l'application
-app.layout = html.Div([
-    html.H1("Exploration des GED KAIRNIAL : Cartographie interactive des données", style={'textAlign': 'center', 'color': '#F08080'}),
+style_entete()
 
-    # Section 1: Exploration temporelle des types de documents
-    html.Div([
-        dcc.Markdown('''
-        ### 1. Évolution des Types de Documents au Fil du Temps
+# Spécification des types de données pour chaque colonne.
+spec_types = {
+    'Date dépôt GED': str,
+    'TYPE DE DOCUMENT': str,
+    'PROJET': str,
+    'EMET': str,
+    'LOT': str,
+    'INDICE': str,
+}
 
-        Ce graphique montre comment l'utilisation des différents types de documents a évolué au fil du temps.
+# Fonction pour charger les données avec gestion des types
+def charger_donnees(chemin_fichier):
+    donnees = pd.read_csv(chemin_fichier, encoding='iso-8859-1', sep=';', dtype=spec_types, low_memory=False)
+    donnees['Date dépôt GED'] = pd.to_datetime(donnees['Date dépôt GED'], format='%d/%m/%Y', errors='coerce')
+    return donnees
 
-        **But:**
+# Fonction pour ajouter les colonnes nécessaires au dataframe
+def pretraiter_donnees(donnees):
+    donnees = donnees.sort_values(by=['TYPE DE DOCUMENT', 'Date dépôt GED'])
+    donnees['Différence en jours'] = donnees.groupby('TYPE DE DOCUMENT')['Date dépôt GED'].diff().dt.days
+    donnees['Nombre d\'indices'] = donnees.groupby('TYPE DE DOCUMENT')['INDICE'].transform('count')
+    return donnees
 
-        - Identifier les tendances.
-        - Indiquer des moments de forte activité de projet.
-        ''',
-        style={'margin': '20px'}),
+# Fonction pour afficher les résultats selon le type (moyenne ou maximum) et la représentation (tableau ou boxplot)
+def afficher_resultats(donnees, type_calcul, representation, y_column, title_suffix):
+    if type_calcul == 'mean':
+        calcul = donnees.groupby('TYPE DE DOCUMENT')[y_column].mean().reset_index()
+        title = f"Moyenne {title_suffix}"
+    elif type_calcul == 'max':
+        calcul = donnees.groupby('TYPE DE DOCUMENT')[y_column].max().reset_index()
+        title = f"Maximum {title_suffix}"
 
-        html.H2('Évolution du nombre de documents', style={'textAlign': 'center', 'color': '#7FDBFF'}),
-        dcc.Dropdown(
-            id='project-dropdown',
-            options=[{'label': p, 'value': p} for p in projects.keys()],
-            value=list(projects.keys())[0],
-            clearable=False
-        ),
-        dcc.Dropdown(
-            id='type-document-dropdown',
-            clearable=False,
-            multi=True
-        ),
-        dcc.Graph(id='line-graph')
-    ], style={'margin': '20px'}),
+    if representation == "Tableau":
+        st.dataframe(calcul)
+    elif representation == "Boxplot":
+        fig = px.box(donnees, x='TYPE DE DOCUMENT', y=y_column, title=title)
+        st.plotly_chart(fig, use_container_width=True)
 
-    # Section 2: Exploration des flux de documents
-    html.Div([
-        dcc.Markdown('''
-        ## 2 : Flux des Documents avec pourcentage d'indice
-
-        Ce diagramme visualise le flux des documents depuis leur origine jusqu'à leur classement par indice.
-
-        - Soulignant les parcours principaux que prennent les documents à travers le projet.
-        - En intégrant les pourcentages directement dans les noms des indices, le graphique offre une vue claire sur la répartition des documents selon leur indice, **ce qui aide à comprendre quelles révisions ou versions sont les plus courantes.**
-        ''',
-        style={'margin': '20px'}),
-
-        html.H2("Flux des Documents avec pourcentage d'indice", style={'textAlign': 'center', 'color': '#7FDBFF'}),
-        dcc.Dropdown(
-            id='project-dropdown-sankey',
-            options=[{'label': name, 'value': path} for name, path in projects.items()],
-            value=list(projects.values())[0],
-            clearable=False
-        ),
-        dcc.Graph(id='sankey-diagram')
-    ], style={'margin': '20px'}),
-
-    # Section 3: Visualisation des Documents par Projet
-    html.Div([
-        html.H1("Visualisation des Documents par Projet", style={'textAlign': 'center', 'color': '#7FDBFF'}),
-
-        # Sélection du projet
-        dcc.Dropdown(
-            id='project-dropdown-documents',
-            options=[{'label': name, 'value': name} for name in projects.keys()],
-            value='40_LAFFITE',  # Valeur par défaut
-            clearable=False
-        ),
-
-        # Sélection de l'indice
-        dcc.Dropdown(
-            id='indice-dropdown',
-            options=[],  # Les options seront mises à jour en fonction du projet sélectionné
-            clearable=True,
-            multi=True,
-            placeholder='Sélectionnez un ou plusieurs INDICE(S)'
-        ),
-
-        # Section Markdown et Treemap pour la répartition par lot et indice
-        dcc.Markdown('''
-            ## 3 : Répartition des Documents par Lot et Indice
-
-            Ce graphique aide à comprendre la distribution des documents selon les lots et leur indice, fournissant des aperçus concernant les parties du projet qui génèrent le plus de documentation et la fréquence des mises à jour ou révisions.
-
-            **Focus sur les Lots:** Les lots avec un grand nombre de documents ou de révisions (indices élevés) peuvent nécessiter une attention particulière pour la gestion des risques et le contrôle qualité.
-
-            **Révisions :** Un nombre élevé d'indices pour certains documents peut indiquer des problèmes dans la conception ou la communication au sein de l'équipe.
-            ''',
-            style={'margin': '20px'}
-        ),
-        dcc.Graph(id='document-treemap'),
-
-        # Section Markdown et Graphique à barres horizontales pour le nombre de documents par lot
-        dcc.Markdown('''
-            ## Visualisation du Nombre de Documents par LOT
-
-            Cette visualisation présente le nombre de documents associés à chaque lot sous forme de graphique à barres horizontales, facilitant l'identification des lots les plus documentés et ceux qui nécessitent potentiellement plus d'attention en termes de révision et de gestion de la qualité.
-            ''',
-            style={'margin': '20px'}
-        ),
-        dcc.Graph(id='simple-bar-chart'),
-    ]),
-
-    # Section 4: Repérer les acteurs majeurs de la GED
-    html.Div([
-        html.H1("Repérer les acteurs majeurs de la GED",style={'textAlign': 'center', 'color': '#7FDBFF'}),
-        dcc.Dropdown(
-            id='project-dropdown-actors',
-            options=[{'label': name, 'value': name} for name in projects.keys()],
-            value='40_LAFFITE',  # Valeur initiale
-            clearable=False
-        ),
-        dcc.Graph(id='document-graph-actors'),
-        html.P("Ces visualisations offrent une vue d'ensemble de qui ajoute quels types de documents et comment cela a évolué à travers les années.")
-    ]),
-
-    # Section 5: Répartition des Types de Document par Émetteur et par Année
-    html.Div([
-        html.H1("Répartition des Types de Document par Émetteur et par Année", style={'textAlign': 'center', 'color': '#7FDBFF'}),
-
-        # Sélection du projet
-        dcc.Dropdown(
-            id='project-dropdown-emitter',
-            options=[{'label': name, 'value': name} for name in projects.keys()],
-            value='40_LAFFITE',  # Valeur par défaut
-            clearable=False
-        ),
-
-        # Section Markdown et Graphique pour la répartition par émetteur et année
-        dcc.Markdown('''
-            Ce graphique affiche la distribution des types de documents émis par chaque contributeur sur plusieurs années.
-
-            Distinguer les responsabilités et les spécialités de chaque émetteur basées sur les types de documents qu'ils produisent.
-            ''',
-            style={'margin': '20px'}
-        ),
-        dcc.Graph(id='document-graph-emitter-year'),
-    ]),
-])
-# Callback pour mettre à jour les options du dropdown des types de documents
-@app.callback(
-    [Output('type-document-dropdown', 'options'),
-     Output('type-document-dropdown', 'value')],
-    Input('project-dropdown', 'value')
-)
-def update_document_dropdown(selected_project):
-    chemin_fichier = projects[selected_project]
-    donnees = pd.read_csv(chemin_fichier, encoding='iso-8859-2', sep=';')
-    options = [{'label': t, 'value': t} for t in donnees['TYPE DE DOCUMENT'].unique()]
-    return options, [donnees['TYPE DE DOCUMENT'].unique()[0]]
-
-# Callback pour mettre à jour le graphique temporel en fonction des sélections
-@app.callback(
-    Output('line-graph', 'figure'),
-    [Input('type-document-dropdown', 'value'),
-     State('project-dropdown', 'value')]
-)
-def update_line_chart(selected_types, selected_project):
-    chemin_fichier = projects[selected_project]
-    donnees = pd.read_csv(chemin_fichier, encoding='iso-8859-1', sep=';')
-    donnees['Date dépôt GED'] = pd.to_datetime(donnees['Date dépôt GED'], format='%d/%m/%Y')
-    donnees_groupées = donnees.groupby([donnees['Date dépôt GED'].dt.to_period("M"), 'TYPE DE DOCUMENT']).size().reset_index(name='Nombre de documents')
-    donnees_groupées['Date dépôt GED'] = donnees_groupées['Date dépôt GED'].dt.to_timestamp()
-
-    fig = go.Figure()
-
-    if selected_types:
-        filtered_data = donnees_groupées[donnees_groupées['TYPE DE DOCUMENT'].isin(selected_types)]
-        for t in selected_types:
-            data_type = filtered_data[filtered_data['TYPE DE DOCUMENT'] == t]
-            data_type = data_type.sort_values('Date dépôt GED')
-            fig.add_trace(go.Scatter(x=data_type['Date dépôt GED'], y=data_type['Nombre de documents'].cumsum(), mode='lines+markers', name=f'Cumulé - {t}'))
-            fig.add_trace(go.Scatter(x=data_type['Date dépôt GED'], y=data_type['Nombre de documents'], mode='lines+markers', name=t, visible='legendonly'))
-
-    fig.update_layout(
-        title=f'Évolution du nombre de documents pour {selected_project}',
-        xaxis_title='Date de Dépôt',
-        yaxis_title='Nombre de Documents',
-        legend_title='Type de Documents'
+# Menu latéral pour les onglets
+with st.sidebar:
+    selectionne = option_menu(
+        menu_title="Menu",
+        options=["Flux des documents", "Évolution des types de documents", "Analyse des documents par lot et indice", "Identification des acteurs principaux", "Comparaison de la masse de documents", "Nombre moyen de docs par type de document", "Évaluer la durée moyenne par type de documents"],
+        icons=["exchange", "line-chart", "bar-chart", "users", "chart-bar", "file-text", "clock"],
+        menu_icon="cast",
+        default_index=0,
+        orientation="vertical"
     )
 
-    return fig
+# Synchroniser les filtres entre les onglets
+if 'projet_selectionne' not in st.session_state:
+    st.session_state['projet_selectionne'] = list(projets.keys())[0]
 
-# Callback pour mettre à jour le diagramme Sankey en fonction des sélections
-@app.callback(
-    Output('sankey-diagram', 'figure'),
-    Input('project-dropdown-sankey', 'value')
-)
-def update_sankey(selected_file_path):
-    donnees = pd.read_csv(selected_file_path, encoding='iso-8859-1', sep=';')
+projet_selectionne = st.selectbox('Sélectionnez un projet', list(projets.keys()), key='projet_global', index=list(projets.keys()).index(st.session_state['projet_selectionne']))
+st.session_state['projet_selectionne'] = projet_selectionne
+
+# Onglet 1: Flux des documents
+if selectionne == "Flux des documents":
+    st.header("Flux des documents")
+    donnees = charger_donnees(projets[projet_selectionne])
+    donnees = pretraiter_donnees(donnees)
+
     total_par_indice = donnees['INDICE'].value_counts(normalize=True) * 100
     total_par_indice = total_par_indice.reset_index()
     total_par_indice.columns = ['INDICE', 'Pourcentage']
 
-    labels_indices_avec_pourcentages = total_par_indice.apply(lambda row: f"{row['INDICE']} ({row['Pourcentage']:.2f}%)", axis=1)
-    map_indice_pourcentage = dict(zip(total_par_indice['INDICE'], labels_indices_avec_pourcentages))
-    donnees['INDICE'] = donnees['INDICE'].map(map_indice_pourcentage)
+    etiquettes_indices_avec_pourcentage = total_par_indice.apply(lambda row: f"{row['INDICE']} ({row['Pourcentage']:.2f}%)", axis=1)
+    map_pourcentage_indice = dict(zip(total_par_indice['INDICE'], etiquettes_indices_avec_pourcentage))
+    donnees['INDICE'] = donnees['INDICE'].map(map_pourcentage_indice)
 
-    all_nodes = pd.concat([donnees['PROJET'], donnees['EMET'], donnees['TYPE DE DOCUMENT'], donnees['INDICE']]).unique()
-    all_nodes = pd.Series(index=all_nodes, data=range(len(all_nodes)))
+    tous_les_noeuds = pd.concat([donnees['PROJET'], donnees['EMET'], donnees['TYPE DE DOCUMENT'], donnees['INDICE']]).unique()
+    tous_les_noeuds = pd.Series(index=tous_les_noeuds, data=range(len(tous_les_noeuds)))
 
-    source = all_nodes[donnees['PROJET']].tolist() + all_nodes[donnees['EMET']].tolist() + all_nodes[donnees['TYPE DE DOCUMENT']].tolist()
-    target = all_nodes[donnees['EMET']].tolist() + all_nodes[donnees['TYPE DE DOCUMENT']].tolist() + all_nodes[donnees['INDICE']].tolist()
-    value = [1]*len(donnees['PROJET']) + [1]*len(donnees['EMET']) + [1]*len(donnees['TYPE DE DOCUMENT'])
+    source = tous_les_noeuds[donnees['PROJET']].tolist() + tous_les_noeuds[donnees['EMET']].tolist() + tous_les_noeuds[donnees['TYPE DE DOCUMENT']].tolist()
+    cible = tous_les_noeuds[donnees['EMET']].tolist() + tous_les_noeuds[donnees['TYPE DE DOCUMENT']].tolist() + tous_les_noeuds[donnees['INDICE']].tolist()
+    valeur = [1] * len(donnees['PROJET']) + [1] * len(donnees['EMET']) + [1] * len(donnees['TYPE DE DOCUMENT'])
+
+    etiquettes_noeuds = tous_les_noeuds.index.tolist()
 
     fig = go.Figure(data=[go.Sankey(
         node=dict(
             pad=15,
             thickness=20,
             line=dict(color='black', width=0.5),
-            label=all_nodes.index.tolist()
+            label=etiquettes_noeuds
         ),
         link=dict(
             source=source,
-            target=target,
-            value=value
+            target=cible,
+            value=valeur
         )
     )])
 
-    fig.update_layout(title_text="Flux de Documents par Projet avec Pourcentages d'Indice", font_size=10)
-    return fig
+    # Ajouter des annotations pour les labels de colonne
+    fig.add_annotation(x=0.1, y=1.1, text="Projet", showarrow=False, font=dict(size=12, color="blue"))
+    fig.add_annotation(x=0.35, y=1.1, text="Émetteur", showarrow=False, font=dict(size=12, color="blue"))
+    fig.add_annotation(x=0.6, y=1.1, text="Type de Document", showarrow=False, font=dict(size=12, color="blue"))
+    fig.add_annotation(x=0.9, y=1.1, text="Indice", showarrow=False, font=dict(size=12, color="blue"))
 
-# Callback pour mettre à jour les options du dropdown des indices en fonction du projet sélectionné
-@app.callback(
-    Output('indice-dropdown', 'options'),
-    Input('project-dropdown-documents', 'value')
-)
-def update_indice_dropdown(selected_project):
-    chemin_fichier = projects[selected_project]
-    donnees = pd.read_csv(chemin_fichier, encoding='iso-8859-1', sep=';')
-    indices = donnees['INDICE'].unique()
-    return [{'label': indice, 'value': indice} for indice in indices]
+    fig.update_layout(title_text="", font_size=10, margin=dict(l=0, r=0, t=40, b=0))
+    st.plotly_chart(fig, use_container_width=True)
 
-# Callback pour mettre à jour les graphiques en fonction des sélections de projet et d'indices
-@app.callback(
-    [Output('document-treemap', 'figure'),
-     Output('simple-bar-chart', 'figure')],
-    [Input('project-dropdown-documents', 'value'), Input('indice-dropdown', 'value')]
-)
-def update_graphs(selected_project, selected_indices):
-    chemin_fichier = projects[selected_project]
-    donnees = pd.read_csv(chemin_fichier, encoding='iso-8859-1', sep=';')
+# Onglet 2: Évolution des types de documents
+elif selectionne == "Évolution des types de documents":
+    st.header("Évolution des types de documents")
+    donnees = charger_donnees(projets[projet_selectionne])
+    donnees['Date dépôt GED'] = pd.to_datetime(donnees['Date dépôt GED'], format='%d/%m/%Y')
+    options_type_document = donnees['TYPE DE DOCUMENT'].unique()
+    types_selectionnes = st.multiselect('Sélectionnez les types de document', options_type_document, default=options_type_document[0], key='tab1_types')
+    
+    donnees_groupees = donnees.groupby([donnees['Date dépôt GED'].dt.to_period("M"), 'TYPE DE DOCUMENT']).size().reset_index(name='Nombre de documents')
+    donnees_groupees['Date dépôt GED'] = donnees_groupees['Date dépôt GED'].dt.to_timestamp()
+    
+    fig = go.Figure()
+    for t in types_selectionnes:
+        donnees_filtrees = donnees_groupees[donnees_groupees['TYPE DE DOCUMENT'] == t]
+        fig.add_trace(go.Scatter(x=donnees_filtrees['Date dépôt GED'], y=donnees_filtrees['Nombre de documents'].cumsum(), mode='lines+markers', name=f'Cumulé - {t}'))
+        fig.add_trace(go.Scatter(x=donnees_filtrees['Date dépôt GED'], y=donnees_filtrees['Nombre de documents'], mode='lines+markers', name=t, visible='legendonly'))
 
-    # Filtre basé sur la sélection des indices
-    if selected_indices:
-        donnees = donnees[donnees['INDICE'].isin(selected_indices)]
-
-    # Treemap pour la répartition par lot et indice
-    donnees_groupées_treemap = donnees.groupby(['LOT', 'INDICE']).size().reset_index(name='Nombre de Documents')
-    fig_treemap = px.treemap(
-        donnees_groupées_treemap,
-        path=['LOT', 'INDICE'],
-        values='Nombre de Documents',
-        title='Répartition des Documents par Lot et Indice'
+    fig.update_layout(
+        title=f'Évolution du nombre de documents pour {projet_selectionne}',
+        xaxis_title='Date de Dépôt',
+        yaxis_title='Nombre de Documents',
+        legend_title='Type de Documents',
+        height=500,  # Ajuster la hauteur du graphique
+        width=1200  # Ajuster la largeur du graphique
     )
+    st.plotly_chart(fig, use_container_width=True)  # Ajuster la largeur du graphique
 
-    # Graphique à barres horizontales pour le nombre de documents par lot avec filtrage par indice
-    documents_par_lot = donnees.groupby('LOT').size().reset_index(name='Nombre de Documents')
-    fig_simple_bar = px.bar(
+# Onglet 3: Analyse des documents par lot et indice
+elif selectionne == "Analyse des documents par lot et indice":
+    st.header("Analyse des documents par lot et indice")
+    donnees = charger_donnees(projets[projet_selectionne])
+    options_indice = donnees['INDICE'].unique()
+    indices_selectionnes = st.multiselect('Sélectionnez un ou plusieurs indices', options_indice, key='tab3_indices')
+
+    if indices_selectionnes:
+        donnees = donnees[donnees['INDICE'].isin(indices_selectionnes)]
+
+    # Répartition des documents par lot et indice (Treemap)
+    donnees_groupees_treemap = donnees.groupby(['LOT', 'INDICE']).size().reset_index(name='Nombre de documents')
+    fig_treemap = px.treemap(
+        donnees_groupees_treemap,
+        path=['LOT', 'INDICE'],
+        values='Nombre de documents',
+        title='Répartition des documents par lot et indice'
+    )
+    fig_treemap.update_layout(height=500, width=1200)  # Ajuster la hauteur et la largeur du graphique
+
+    # Répartition des documents par type de documents et indice
+    donnees_groupees_type_indice2 = donnees.groupby(['TYPE DE DOCUMENT', 'INDICE']).size().reset_index(name='Nombre de documents')
+    fig_type_indice2 = px.treemap(
+        donnees_groupees_type_indice2,
+        path=['TYPE DE DOCUMENT', 'INDICE'],
+        values='Nombre de documents',
+        title='Répartition des documents par type de documents et indice'
+    )
+    fig_type_indice2.update_layout(height=550, width=1200)  # Ajuster la hauteur et la largeur du graphique
+
+    # Répartition des documents par type de documents, lot et indice (Treemap)
+    donnees_groupees_type_indice = donnees.groupby(['LOT', 'TYPE DE DOCUMENT', 'INDICE']).size().reset_index(name='Nombre de documents')
+    fig_type_indice = px.treemap(
+        donnees_groupees_type_indice,
+        path=['LOT', 'TYPE DE DOCUMENT', 'INDICE'],
+        values='Nombre de documents',
+        title='Répartition des documents par type de documents, lot et indice'
+    )
+    fig_type_indice.update_layout(height=800, width=1200)  # Ajuster la hauteur et la largeur du graphique
+
+    # Nombre de documents par lot
+    documents_par_lot = donnees.groupby('LOT').size().reset_index(name='Nombre de documents')
+    fig_bar_lot = px.bar(
         documents_par_lot,
         y='LOT',
-        x='Nombre de Documents',
+        x='Nombre de documents',
         orientation='h',
-        title="Nombre de Documents par LOT",
-        labels={"LOT": "LOT", "Nombre de Documents": "Nombre de Documents"},
-        color='Nombre de Documents',
+        title="Nombre de documents par lot",
+        labels={"LOT": "Lot", "Nombre de documents": "Nombre de documents"},
+        color='Nombre de documents',
         color_continuous_scale=px.colors.sequential.Viridis
     )
-    fig_simple_bar.update_layout(yaxis={'categoryorder': 'total ascending'})
+    fig_bar_lot.update_layout(yaxis={'categoryorder': 'total ascending'}, height=850, width=1000)  # Ajuster la hauteur et la largeur du graphique
 
-    return fig_treemap, fig_simple_bar
+    # Nombre de documents par type de documents
+    documents_par_type = donnees.groupby('TYPE DE DOCUMENT').size().reset_index(name='Nombre de documents')
+    fig_bar_type = px.bar(
+        documents_par_type,
+        y='TYPE DE DOCUMENT',
+        x='Nombre de documents',
+        orientation='h',
+        title="Nombre de documents par type de documents",
+        labels={"TYPE DE DOCUMENT": "Type de documents", "Nombre de documents": "Nombre de documents"},
+        color='Nombre de documents',
+        color_continuous_scale=px.colors.sequential.Viridis
+    )
+    fig_bar_type.update_layout(yaxis={'categoryorder': 'total ascending'}, height=850, width=1200)  # Ajuster la hauteur et la largeur du graphique
 
-# Callback pour mettre à jour le graphique des acteurs majeurs
-@app.callback(
-    Output('document-graph-actors', 'figure'),
-    [Input('project-dropdown-actors', 'value')]
-)
-def update_graph(selected_project):
-    chemin_fichier = projects[selected_project]
-    donnees = pd.read_csv(chemin_fichier, encoding='iso-8859-1', sep=';')
-    # Préparation des données pour la visualisation
-    donnees['Date dépôt GED'] = pd.to_datetime(donnees['Date dépôt GED'],format='%d/%m/%Y')
-    donnees['Année'] = donnees['Date dépôt GED'].dt.year
+    st.plotly_chart(fig_treemap, use_container_width=True)
+    st.plotly_chart(fig_type_indice2, use_container_width=True)
+    st.plotly_chart(fig_type_indice, use_container_width=True)
+    st.plotly_chart(fig_bar_lot, use_container_width=True)
+    st.plotly_chart(fig_bar_type, use_container_width=True)
 
-    # Création de la visualisation avec Plotly Express
-    fig = px.treemap(donnees, path=['Année', 'Ajouté par', 'TYPE DE DOCUMENT'],
-                     title='Répartition des Types de Documents par acteur (Ajouté par) et par Année')
-    fig.update_layout(margin=dict(l=20, r=20, t=40, b=20))
-    return fig
-
-# Callback pour mettre à jour le graphique de la répartition par émetteur et année
-@app.callback(
-    Output('document-graph-emitter-year', 'figure'),
-    [Input('project-dropdown-emitter', 'value')]
-)
-def update_graph_emitter_year(selected_project):
-    chemin_fichier = projects[selected_project]
-    donnees = pd.read_csv(chemin_fichier, encoding='iso-8859-1', sep=';')
-    # Préparation des données pour la visualisation
+# Onglet 4: Identification des acteurs principaux
+elif selectionne == "Identification des acteurs principaux":
+    st.header("Identification des acteurs principaux")
+    donnees = charger_donnees(projets[projet_selectionne])
     donnees['Date dépôt GED'] = pd.to_datetime(donnees['Date dépôt GED'], format='%d/%m/%Y')
     donnees['Année'] = donnees['Date dépôt GED'].dt.year
 
-    # Création de la visualisation avec Plotly Express
-    fig = px.treemap(donnees, path=['Année', 'EMET', 'TYPE DE DOCUMENT'],
-                     title='Répartition des Types de Document par Émetteur et par Année')
-    fig.update_layout(margin=dict(l=20, r=20, t=40, b=20))
-    return fig
-# Exécution de l'application :
-if __name__ == '__main__':
-    app.run_server(debug=True, port=2000)
+    # Répartition des types de documents par émetteur
+    fig_emetteur = px.treemap(donnees, path=['EMET', 'TYPE DE DOCUMENT'],
+                              title='Répartition des types de documents par émetteur')
+    fig_emetteur.update_layout(margin=dict(l=20, r=20, t=40, b=20), height=480, width=1200)  # Ajuster la hauteur et la largeur du graphique
+    st.plotly_chart(fig_emetteur, use_container_width=True)
+
+    # Répartition des types de documents par acteur (Ajouté par)
+    fig_ajoute_par = px.treemap(donnees, path=['Ajouté par', 'TYPE DE DOCUMENT'],
+                                title='Répartition des types de documents par acteur (Ajouté par)')
+    fig_ajoute_par.update_layout(margin=dict(l=20, r=20, t=40, b=20), height=480, width=1200)  # Ajuster la hauteur et la largeur du graphique
+    st.plotly_chart(fig_ajoute_par, use_container_width=True)
+
+# Onglet 5: Comparaison de la masse de documents entre projets
+elif selectionne == "Comparaison de la masse de documents.":
+    st.header("Comparaison de la masse de documents.")
+    periode_selectionnee = st.radio(
+        'Sélectionnez la période',
+        options=['6m', '12m', 'all'],
+        format_func=lambda x: '6 premiers mois' if x == '6m' else '12 premiers mois' if x == '12m' else 'Toute la période',
+        horizontal=True
+    )
+    projets_selectionnes = st.multiselect('Sélectionnez les projets', list(projets.keys()), default=list(projets.keys()))
+
+    def mise_a_jour_comparaison_masse_documents(projets_selectionnes, periode_selectionnee):
+        donnees_barre = []
+        for projet in projets_selectionnes:
+            df = pd.read_csv(projets[projet], encoding='iso-8859-1', sep=';', dtype=str)
+            df['Date dépôt GED'] = pd.to_datetime(df['Date dépôt GED'], format='%d/%m/%Y')
+            date_debut = df['Date dépôt GED'].min()
+            if periode_selectionnee == '6m':
+                date_fin = date_debut + timedelta(days=180)  # 6 mois
+            elif periode_selectionnee == '12m':
+                date_fin = date_debut + timedelta(days=365)  # 12 mois
+            else:
+                date_fin = df['Date dépôt GED'].max()  # Toute la période
+
+            df_filtre = df[(df['Date dépôt GED'] >= date_debut) & (df['Date dépôt GED'] <= date_fin)]
+            total_documents = df_filtre.shape[0]
+            donnees_barre.append({
+                'Chantier': projet,
+                'Masse de documents': total_documents,
+                'Date début': date_debut.strftime('%Y-%m-%d'),
+                'Date fin': date_fin.strftime('%Y-%m-%d')
+            })
+
+        # Tri des données par masse de documents
+        df_barre = pd.DataFrame(donnees_barre)
+        df_barre = df_barre.sort_values(by='Masse de documents', ascending=False)
+
+        # Calcul de la médiane de masse de documents par période
+        mediane_masse = df_barre['Masse de documents'].median()
+        df_barre['mediane'] = mediane_masse
+
+        # Création du graphique à barres pour voir la masse de chaque document;
+        fig_barre = go.Figure()
+        fig_barre.add_trace(go.Bar(
+            x=df_barre['Chantier'], y=df_barre['Masse de documents'],
+            text=df_barre['Masse de documents'], textposition='auto',
+            name='Masse de documents',
+            marker_color='indianred'
+        ))
+
+        fig_barre.add_trace(go.Scatter(
+            x=df_barre['Chantier'], y=df_barre['mediane'],
+            mode='lines', name='Médiane',
+            line=dict(color='blue', dash='dash')
+        ))
+
+        # Ajouter des annotations pour les valeurs importantes
+        for index, row in df_barre.iterrows():
+            fig_barre.add_annotation(
+                x=row['Chantier'], y=row['Masse de documents'],
+                text=f"{row['Masse de documents']}",
+                showarrow=True, arrowhead=2
+            )
+
+        fig_barre.update_layout(
+            title='Comparaison de la masse de documents entre les chantiers.',
+            xaxis_title='Chantier', yaxis_title='Masse de documents',
+            font=dict(size=15),
+            height=450,  # Ajuster la hauteur du graphique
+            width=3000,  # Ajuster la largeur du graphique
+            yaxis=dict(title='Masse de documents', showgrid=True, zeroline=True, showline=True, showticklabels=True),
+            xaxis=dict(title='Chantier', showgrid=True, zeroline=True, showline=True, showticklabels=True)
+        )
+        return fig_barre
+
+    fig1 = mise_a_jour_comparaison_masse_documents(projets_selectionnes, periode_selectionnee)
+    st.plotly_chart(fig1, use_container_width=True)
+
+## FIN Programme !
